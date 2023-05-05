@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Socket.IO chat</title>
+    <style>
+      body { margin: 0; padding-bottom: 3rem; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+
+      #form { background: rgba(0, 0, 0, 0.15); padding: 0.25rem; position: fixed; bottom: 0; left: 0; right: 0; display: flex; height: 3rem; box-sizing: border-box; backdrop-filter: blur(10px); }
+      #input { border: none; padding: 0 1rem; flex-grow: 1; border-radius: 2rem; margin: 0.25rem; }
+      #input:focus { outline: none; }
+      #form > button { background: #333; border: none; padding: 0 1rem; margin: 0.25rem; border-radius: 3px; outline: none; color: #fff; }
+
+      #messages { list-style-type: none; margin: 0; padding: 0; }
+      #messages > li { padding: 0.5rem 1rem; }
+      #messages > li:nth-child(odd) { background: #efefef; }
+      #image-upload {display: none;}
+      .custom-label {display: inline-block;border-radius: 3px;background-color: #333;color: #fff;cursor: pointer;padding: 0 1rem;margin: 0.25rem;transition: all .3s ease;line-height: 2rem;}
+      .custom-label:hover {background-color: #0069d9;}
+      .outter {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 94vh;
+      width: 100%;
+      margin: 0;
+      background-color: rgba(0, 0, 0, 0.3);
+      position: fixed;
+      top: 0;
+      left: 0;
+      z-index: 100;
+    }
+    .inner {
+      text-align: center;
+      padding: 20px;
+      background-color: #fff;
+    }
+    canvas {
+      background-color: #fff;
+      border: 1px solid #000;
+      display: block;
+      margin: auto;
+    }
+
+    input[type="color"] {
+      height: 30px;
+      width: 50px;
+      padding: 0;
+      margin: 0;
+      border: none;
+    }
+
+    .inner button {
+        margin: 10px;
+    }
+
+    .picker {
+      position: fixed;
+      right: 0;
+      bottom: 50px;
+    }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+    <script src="https://cdn.jsdelivr.net/npm/emoji-mart@latest/dist/browser.js"></script>
+  </head>
+  <body>
+    <ul id="messages"></ul>
+    <form id="form" action="">
+      <input id="input" autocomplete="off" autofocus="true" /><button>Send</button>
+      <label id="emoji" class="custom-label">emoji</label>
+      <input type="file" accept="image/*" id="image-upload">
+      <label for="image-upload" class="custom-label">file</label>
+      <label id="draw" class="custom-label">draw</label>
+    </form>
+    <div class="outter">
+      <div class="inner">
+          <canvas id="canvas" width="1000" height="550"></canvas>
+
+          <div>
+            <input type="color" id="colorPicker">
+            <button onclick="changeSize('small')">小</button>
+            <button onclick="changeSize('medium')">中</button>
+            <button onclick="changeSize('large')">大</button>
+            <button onclick="erase()">橡皮擦</button>
+            <button onclick="clearScreen()">清屏</button>
+            <button onclick="sendDraw()">发送</button>
+          </div>
+      </div>
+    </div>
+    <script src="/socket.io/socket.io.js"></script>
+
+    <script>
+      var socket = io();
+      const Toast = Swal.mixin({
+        toast: true,
+        position: 'top-end',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true,
+        didOpen: (toast) => {
+          toast.addEventListener('mouseenter', Swal.stopTimer)
+          toast.addEventListener('mouseleave', Swal.resumeTimer)
+        }
+      })
+
+      var messages = document.getElementById('messages');
+      var form = document.getElementById('form');
+      var input = document.getElementById('input');
+
+      var username = prompt('你叫啥？');
+      if(username){
+        socket.emit('join', username);
+      }
+
+      form.addEventListener('submit', function(e) {
+        e.preventDefault();
+        if (input.value) {
+          socket.emit('chat message', input.value);
+          input.value = '';
+        }
+      });
+
+      socket.on('chat message', function(msg) {
+        var item = document.createElement('li');
+        
+        const pattern = /(http(s)?:\/\/)?[\w.]+[\w\/]*\.[\w.]+[^\s@]*$/g; // 正则匹配聊天内容中的 URL
+        msg = msg.replace(pattern, '<a href="$&" target="_blank">$&</a>');
+        // msg = replaceURLWithHTMLLinks(msg);
+
+        // item.textContent = msg;
+        item.innerHTML = msg;
+        Toast.fire({
+          icon: 'success',
+          title: msg
+        })
+        messages.appendChild(item);
+        window.scrollTo(0, document.body.scrollHeight);
+      });
+
+      const imageUpload = document.getElementById('image-upload');
+
+      imageUpload.addEventListener('change', () => {
+          const file = imageUpload.files[0];
+
+          if (file && file.type.startsWith('image/')) {
+              const reader = new FileReader();
+              const chatImage = document.createElement('img');
+              reader.readAsDataURL(file);
+
+              reader.onload = () => {
+                  chatImage.src = reader.result;
+                  socket.emit('chat image', reader.result, username);
+              };
+
+              
+          }
+      });
+
+      socket.on('chat image', (dataUrl, username) => {
+        const chatImage = document.createElement('img');
+        chatImage.src = dataUrl;
+        const messageElement = document.createElement('li');
+        messageElement.innerText = `[${getTime()}] ${username}:`;
+        messageElement.appendChild(chatImage);
+
+        messages.appendChild(messageElement);
+        window.scrollTo(0, document.body.scrollHeight);
+      });
+
+      function base64toFile (dataurl, filename = 'file') {
+        let arr = dataurl.split(',')
+        let mime = arr[0].match(/:(.*?);/)[1]
+        let suffix = mime.split('/')[1]
+        let bstr = atob(arr[1])
+        let n = bstr.length
+        let u8arr = new Uint8Array(n)
+        while (n--) {
+            u8arr[n] = bstr.charCodeAt(n)
+        }
+        return new File([u8arr], `${filename}.${suffix}`, {
+            type: mime
+        })
+      }
+
+      function sendDraw(){
+        const dataUrl = canvas.toDataURL();
+        const file = base64toFile(dataUrl);
+        const reader = new FileReader();
+        const chatImage = document.createElement('img');
+        reader.readAsDataURL(file);
+
+        reader.onload = () => {
+            chatImage.src = reader.result;
+            socket.emit('chat image', reader.result, username);
+        };
+
+
+        clearScreen();
+        document.querySelector('body > div').style.visibility = 'hidden';
+      }
+
+      function replaceURLWithHTMLLinks(text) {
+        const urlRegex = /(((https?:\/\/)|(www\.))[^\s]+)/g;
+        return text.replace(urlRegex, function (url, b) {
+          const url2 = (b == 'www.') ? 'http://' + url : url;
+          return '<a href="' + url2 + '" target="_blank">' + url + '</a>';
+        });
+      }
+
+      // 获取当前时间戳，并格式化成 "YYYY-MM-DD HH:mm:ss" 的形式
+      function getTime() {
+        var dateObj = new Date();
+        var formattedTime = dateObj.getFullYear() + '-' +
+                           ('0' + (dateObj.getMonth()+1)).slice(-2) + '-' +
+                           ('0' + dateObj.getDate()).slice(-2) + ' ' +
+                           ('0' + dateObj.getHours()).slice(-2) + ':' +
+                           ('0' + dateObj.getMinutes()).slice(-2) + ':' +
+                           ('0' + dateObj.getSeconds()).slice(-2);
+        return formattedTime
+      }
+
+      document.querySelector('body > div').style.visibility = 'hidden';
+      document.getElementById("draw").onclick = ()=>{
+        var flag = document.querySelector('body > div').style.visibility;
+        document.querySelector('body > div').style.visibility = flag ? '' : 'hidden';
+      }
+
+      var canvas = document.getElementById("canvas");
+      var context = canvas.getContext("2d");
+
+      var size = "medium";
+      var color = "#000";
+
+      var draw = false;
+
+      function changeSize(newSize) {
+        size = newSize;
+      }
+
+      function erase() {
+          color = "#fff";
+          size = "large";
+      }
+
+      function clearScreen() {
+          context.clearRect(0, 0, canvas.width, canvas.height);
+      }
+
+      var eraserSize = 10;
+
+      document.getElementById("colorPicker").addEventListener("change", function(event) {
+        color = event.target.value;
+      });
+
+      canvas.addEventListener("mousedown", function(event) {
+        draw = true;
+        context.beginPath();
+        context.moveTo(event.clientX - canvas.offsetLeft, event.clientY - canvas.offsetTop);
+        context.strokeStyle = color;
+        context.lineWidth = getSize();
+      });
+
+      canvas.addEventListener("mousemove", function(event) {
+        if (draw) {
+          context.lineTo(event.clientX - canvas.offsetLeft, event.clientY - canvas.offsetTop);
+          context.stroke();
+        }
+      });
+
+      canvas.addEventListener("mouseup", function(event) {
+        draw = false;
+      });
+
+          canvas.addEventListener("wheel", function(event) {
+              event.preventDefault();
+              eraserSize += event.deltaY > 0 ? 1 : -1;
+              eraserSize = Math.max(1, eraserSize);
+              eraserSize = Math.min(4000, eraserSize);
+              size = eraserSize.toString();
+          });
+
+      function getSize() {
+        switch (size) {
+          case "small":
+            return 2;
+          case "medium":
+            return 5;
+          case "large":
+            return 10;
+                  default:
+                      return parseInt(size);
+        }
+      }
+      const pickerOptions = { onEmojiSelect: show }
+      const picker = new EmojiMart.Picker(pickerOptions)
+      picker.classList.add('picker');
+      picker.style.visibility = 'hidden';
+      document.body.appendChild(picker)
+
+      document.getElementById("emoji").onclick = ()=>{
+        let show = picker.style.visibility;
+        picker.style.visibility = show ? '' : 'hidden';
+      }
+
+      function show(item){
+        document.getElementById('input').value = document.getElementById('input').value+item.native;
+        document.getElementById('input').focus();
+        picker.style.visibility = 'hidden';
+      }
+
+    </script>
+  </body>
+</html>
